@@ -1,162 +1,174 @@
-# I Turned a Spare Windows Laptop into a Zero-Cost Private AI Datacenter for My Mac
+<div align="center">
 
-*A system design walkthrough: requirements, architecture, trade-offs, the actual build and benchmarks. Total spend: ₹0.*
+# 🖥️ Zero-Cost Private AI Datacenter
 
----
+**I turned a spare Windows gaming laptop into a private GPU server for my Mac,<br>and plugged local LLMs into any coding agent, for ₹0.**
 
-## TL;DR
+![Cost](https://img.shields.io/badge/cost-₹0-2ea44f?style=flat-square)
+![Cloud](https://img.shields.io/badge/cloud-none-2ea44f?style=flat-square)
+![Python](https://img.shields.io/badge/python-stdlib_only-3776AB?style=flat-square&logo=python&logoColor=white)
+![Ollama](https://img.shields.io/badge/Ollama-0.34-000000?style=flat-square)
+![RustDesk](https://img.shields.io/badge/RustDesk-remote_control-024EFF?style=flat-square)
+![Platforms](https://img.shields.io/badge/macOS_+_Windows-LAN-lightgrey?style=flat-square)
 
-I had a MacBook (Apple M4) that I love working on, and a Windows gaming laptop with an NVIDIA GPU that mostly sat idle. I wanted the Mac to stay my only workstation while the Windows machine became a headless "datacenter" I could use from it: a remote shell, a remote screen when needed, and local LLMs served over my home network.
+[Architecture](#-architecture) · [Build guide](#-the-build-step-by-step) · [Control panel](#step-6-the-control-panel) · [Benchmarks](#-benchmarks) · [Quick start](#-quick-start)
 
-The result:
-
-- `ssh datacenter` drops me into PowerShell on the Windows box, with key-based auth and no passwords.
-- **RustDesk** is my remote control: the full Windows desktop in a window on the Mac, over direct IP with no third-party relay.
-- Ollama on the Windows GPU serves models to the Mac over the LAN.
-- A small control panel on the Mac (`http://127.0.0.1:8765`) shows health, launches sessions and chats with the models. It starts automatically at login.
-- **Portable to any agent.** The models sit behind a standard OpenAI-compatible API, so any coding agent, IDE extension or SDK that accepts a custom base URL can use them. I use OpenCode as the example; swapping in another agent is a config change.
-- **Zero cost.** Every component is free or open source, running on hardware I already owned. No subscriptions, no API bills, no cloud.
-
-**By the numbers** (measured from the Mac over Wi-Fi):
-
-| Metric | Result |
-|---|---|
-| Network round trip to the datacenter | **4.6 ms** p50 |
-| Chat model (`qwen2.5:3b`) generation speed | **54.9 tok/s** |
-| Autocomplete model (`qwen2.5-coder:1.5b`) generation speed | **89.5 tok/s** |
-| Time to first token, warm | **< 65 ms** for every model |
-| Network share of total response time | **~0.1%** |
-| Monthly cost | **₹0** |
+</div>
 
 ---
 
-## 1. The problem
+## ✨ At a glance
 
 | | |
 |---|---|
-| **Primary workstation** | MacBook, Apple M4, macOS 15.7 |
-| **Idle hardware** | Windows 11 Home laptop, Intel i5-10300H, 8 GB RAM, NVIDIA GTX 1650 (4 GB VRAM) |
-| **Network** | Both on the same home Wi-Fi/LAN |
+| ⚡ **4.6 ms** | network round trip, Mac → datacenter (median) |
+| 🚀 **54.9 tok/s** | chat model, `qwen2.5:3b` |
+| ⌨️ **89.5 tok/s** | autocomplete model, `qwen2.5-coder:1.5b` |
+| ⏱️ **< 65 ms** | time to first token, every model, warm |
+| 📡 **~0.1%** | share of response time spent on the network |
+| 💸 **₹0 / month** | no subscriptions, no API bills, no cloud |
 
-I didn't want to juggle two keyboards or two desktops. I wanted one seat (the Mac) and one box of compute (the Windows laptop), the way you'd use a server in a rack.
+**What you get**
 
-### Functional requirements
-
-1. Run commands on the Windows machine from the Mac terminal.
-2. See and control the Windows desktop from the Mac when a GUI is unavoidable.
-3. Host LLMs on the Windows GPU and call them from the Mac (CLI, HTTP API and agents).
-4. Use those local models from any coding agent, not only a chat box.
-5. Reconnect with zero manual steps after either machine reboots.
-
-### Non-functional requirements
-
-- **Zero cost:** free and open-source tools only, on hardware I already have.
-- **Private:** code and prompts stay on my LAN. No cloud relays for model traffic.
-- **Portable:** no lock-in to one agent or editor. Standard APIs only.
-- **Secure by default:** nothing exposed to the internet, key-based auth, least-privilege firewall rules.
-- **Non-destructive:** keep Windows as-is, with no wipe or reinstall.
-- **Low friction:** no commands to memorize for day-to-day use.
+- 🔑 **One-command shell:** `ssh datacenter` opens PowerShell on the Windows box, key-based, no passwords.
+- 🖱️ **Remote control with RustDesk:** the full Windows desktop in a window on the Mac, direct over the LAN, no relay.
+- 🧠 **Local LLMs on the GPU:** Ollama serves models to the Mac over the home network.
+- 🎛️ **A control panel:** one local web page for health checks, one-click launchers and a streaming chat. Starts at login.
+- 🔌 **Portable to any agent:** a standard OpenAI-compatible API, so any agent, IDE extension or SDK works with a one-line config change.
 
 ---
 
-## 2. Architecture
+## 📑 Contents
+
+1. [The problem](#-the-problem)
+2. [Architecture](#-architecture)
+3. [Design decisions](#-design-decisions-and-trade-offs)
+4. [The build, step by step](#-the-build-step-by-step)
+5. [Benchmarks](#-benchmarks)
+6. [Security model](#-security-model)
+7. [Zero-cost bill of materials](#-zero-cost-bill-of-materials)
+8. [Quick start](#-quick-start)
+
+---
+
+## 🎯 The problem
+
+| | |
+|---|---|
+| **Workstation** | MacBook · Apple M4 · macOS 15.7 |
+| **Idle hardware** | Windows 11 Home laptop · Intel i5-10300H · 8 GB RAM · NVIDIA GTX 1650 (4 GB VRAM) |
+| **Network** | Both on the same home Wi-Fi |
+
+I didn't want two keyboards or two desktops. I wanted **one seat** (the Mac) and **one box of compute** (the laptop), the way you'd use a server in a rack.
+
+<table>
+<tr><th>Functional requirements</th><th>Non-functional requirements</th></tr>
+<tr><td valign="top">
+
+1. Run commands on Windows from the Mac terminal
+2. See and control the Windows desktop when a GUI is unavoidable
+3. Host LLMs on the Windows GPU and call them from the Mac
+4. Use those models from any coding agent, not just a chat box
+5. Reconnect automatically after either machine reboots
+
+</td><td valign="top">
+
+- **Zero cost:** free and open-source tools, existing hardware
+- **Private:** code and prompts never leave the LAN
+- **Portable:** no lock-in to one agent or editor
+- **Secure by default:** nothing exposed to the internet
+- **Non-destructive:** keep Windows as it is
+- **Low friction:** no commands to memorize
+
+</td></tr>
+</table>
+
+---
+
+## 🧱 Architecture
 
 ```mermaid
 flowchart LR
-  subgraph MAC["MacBook (workstation)"]
+  subgraph MAC["💻 MacBook · workstation"]
     T["Terminal<br/>ssh datacenter"]
-    P["Control panel<br/>127.0.0.1:8765<br/>(launchd agent)"]
+    P["Control panel<br/>127.0.0.1:8765"]
     OC["OpenCode"]
-    AG["Any agent / IDE / SDK<br/>(OpenAI-compatible)"]
+    AG["Any agent / IDE / SDK"]
     RDc["RustDesk client"]
   end
 
-  subgraph WIN["Windows laptop (datacenter)"]
+  subgraph WIN["🖥️ Windows laptop · datacenter"]
     SSHD["OpenSSH Server<br/>:22"]
-    OL["Ollama<br/>:11434<br/>GTX 1650"]
-    RDs["RustDesk service<br/>:21118 direct IP"]
+    OL["Ollama on GTX 1650<br/>:11434"]
+    RDs["RustDesk service<br/>:21118"]
   end
 
-  T -- "SSH (ed25519 key)" --> SSHD
-  P -- "status, launch actions" --> SSHD
-  P -- "HTTP /api/chat (or SSH tunnel fallback)" --> OL
-  OC -- "OpenAI-compatible /v1" --> OL
-  AG -- "OpenAI-compatible /v1" --> OL
-  RDc -- "direct IP, LAN only" --> RDs
+  T -- "SSH · ed25519" --> SSHD
+  P -- "launch actions" --> SSHD
+  P -- "HTTP · tunnel fallback" --> OL
+  OC -- "OpenAI API /v1" --> OL
+  AG -- "OpenAI API /v1" --> OL
+  RDc -- "direct IP · LAN only" --> RDs
 ```
-
-### Component responsibilities
 
 | Layer | Component | Role |
 |---|---|---|
-| Access (CLI) | OpenSSH Server on Windows, `~/.ssh/config` alias on the Mac | Remote shell, remote commands, port forwarding |
-| Remote control (GUI) | RustDesk (direct IP mode) | See and control the Windows desktop from the Mac |
-| Compute | Ollama on the GTX 1650 | Model serving: native API plus an OpenAI-compatible `/v1` |
-| Control plane | `dc_panel.py` plus a launchd agent | Health checks, one-click launchers, chat UI, tunnel self-healing |
-| Clients | OpenCode, any OpenAI-compatible agent, the `ollama` CLI, curl | Consumers of the model API |
+| 🔑 Shell | OpenSSH Server + `datacenter` alias in `~/.ssh/config` | Remote commands, port forwarding |
+| 🖱️ Remote control | RustDesk, direct-IP mode | See and control the Windows desktop |
+| 🧠 Compute | Ollama on the GTX 1650 | Native API + OpenAI-compatible `/v1` |
+| 🎛️ Control plane | [`panel/dc_panel.py`](panel/dc_panel.py) + launchd | Health, launchers, chat, self-healing tunnel |
+| 🔌 Clients | OpenCode, any OpenAI-compatible agent, `ollama` CLI, curl | Consume the model API |
 
 ---
 
-## 3. Design decisions and trade-offs
+## 🧭 Design decisions and trade-offs
 
-### 3.1 Remote access: SSH for the terminal, RustDesk for remote control
+### Shell over SSH, screen over RustDesk
 
 | Option | Verdict | Why |
+|---|:---:|---|
+| **SSH** | ✅ | Built into both OSes, encrypted, scriptable, near-zero overhead, free port forwarding |
+| Windows Remote Desktop | ❌ | Windows **Home** can't host Remote Desktop |
+| **RustDesk** | ✅ | Open source (AGPL), works on Home, **direct IP** keeps traffic on the LAN |
+| remotecontrol-desktop | ❌ | Small project, known keyboard issues, public relay by default |
+| Sunshine + Moonlight | ⏳ | Best for graphics-heavy work; overkill for now |
+
+### How the Mac reaches the models
+
+| Approach | 👍 | 👎 |
 |---|---|---|
-| **SSH** | ✅ Primary | Built into both OSes, scriptable, encrypted, near-zero overhead, and gives port forwarding for free |
-| Windows Remote Desktop | ❌ | Windows **Home** can't act as a Remote Desktop host |
-| **RustDesk** | ✅ Remote control | Free and open source (AGPL), works on Home, supports **direct IP** so traffic stays on the LAN |
-| remotecontrol-desktop | ❌ | Small project, documented keyboard issues, relays through a public server by default |
-| Sunshine + Moonlight | Maybe later | Best latency for GPU and graphics work, but overkill for now |
+| **SSH tunnel** (`-L 11435:localhost:11434`) | No new ports, encrypted | Needs a running tunnel process |
+| **Ollama on the LAN** (`OLLAMA_HOST=0.0.0.0`) | Simple URL for every client | Plain HTTP; firewall must be scoped to private networks |
 
-### 3.2 How the Mac reaches Ollama
+**Decision: both.** Clients use the direct address; the control panel falls back to an SSH tunnel automatically when that fails. That fallback is what lets the system heal itself after a Windows reboot.
 
-Ollama listens on `localhost` by default. There are two ways to reach it from another machine:
+### 🔌 Portable to any agent
 
-| Approach | Pros | Cons |
+The datacenter speaks a **standard protocol**, not a tool-specific one:
+
+| Interface | Endpoint | Used by |
 |---|---|---|
-| **SSH local forward** (`-L 11435:localhost:11434`) | No new ports, encrypted, no Windows config change | Needs a tunnel process running |
-| **Bind Ollama to the LAN** (`OLLAMA_HOST=0.0.0.0`) with a firewall rule on the Private profile | Simple URL, works with any client | Plain HTTP on the LAN, and the firewall must be scoped carefully |
+| Native Ollama API | `http://<windows-lan-ip>:11434/api/…` | `ollama` CLI, the control panel |
+| **OpenAI-compatible API** | `http://<windows-lan-ip>:11434/v1` | Practically every agent, extension and SDK |
 
-**Decision: both.** Clients use the direct LAN endpoint. The control panel checks it first and **falls back to an SSH tunnel automatically** when it's unreachable. That fallback is what makes the system self-heal after a Windows reboot, when Ollama isn't up yet.
+Anything that accepts a **base URL** and a **model name** works: terminal agents (OpenCode, Aider), editor extensions (Continue, Cline), chat UIs (Open WebUI) and your own code (OpenAI SDK, LangChain, Vercel AI SDK).
 
-### 3.3 Portable to any agent
+> [!IMPORTANT]
+> The tool must call the model **from your own machine**. Tools that route "custom model" requests through their vendor's cloud can't reach a LAN address, and working around that would mean exposing the model to the internet.
 
-The key design choice: **the datacenter speaks a standard protocol, not a tool-specific one.** Ollama exposes two interfaces:
+### Choosing models for a 4 GB GPU
 
-| Interface | Endpoint | Who uses it |
-|---|---|---|
-| Native Ollama API | `http://<windows-lan-ip>:11434/api/...` | The `ollama` CLI, the control panel, tools with an "Ollama" provider |
-| **OpenAI-compatible API** | `http://<windows-lan-ip>:11434/v1` | Practically every agent, IDE extension and SDK |
+| Model | Loaded size | Fits in VRAM | Use |
+|---|---|:---:|---|
+| `qwen2.5-coder:1.5b-base` | 1.39 GB | ✅ 100% | Autocomplete |
+| `nomic-embed-text` | ~0.3 GB | ✅ | Embeddings for code search |
+| `qwen2.5:3b` | 2.34 GB | ✅ 100% | Chat, quick edits |
+| `qwen2.5:3b-32k` | 3.00 GB | ⚠️ 79% | Agent work |
+| `qwen2.5-coder:7b` | ~4.7 GB | ❌ | Would spill heavily onto the CPU |
 
-Because the OpenAI chat-completions format is the de facto standard, the models plug into anything that lets you set a **base URL** and a **model name**:
+### The hidden gotcha: context size
 
-- terminal coding agents (OpenCode, Aider, and similar)
-- IDE extensions with a custom or Ollama provider (Continue, Cline, and similar)
-- chat UIs (Open WebUI, Enchanted)
-- your own code, through the OpenAI SDK or frameworks like LangChain and the Vercel AI SDK
-
-Switching agents means changing one config file, not rebuilding infrastructure. The only rule: the tool must call the model **from your own machine**. Tools that route "custom model" requests through their vendor's cloud can't reach a LAN address, and working around that would mean exposing the model to the internet.
-
-### 3.4 Model sizing for a 4 GB GPU
-
-VRAM is the binding constraint.
-
-| Model | Loaded size | Fits in 4 GB VRAM? | Use |
-|---|---|---|---|
-| `qwen2.5-coder:1.5b-base` | 1.39 GB (measured) | ✅ 100% | Autocomplete (fill-in-the-middle) |
-| `nomic-embed-text` | ~0.3 GB | ✅ | Embeddings for codebase search |
-| `qwen2.5:3b` | 2.34 GB (measured) | ✅ 100% | Chat, quick edits |
-| `qwen2.5:3b-32k` | 3.00 GB (measured) | ⚠️ 79% | Agent work |
-| `qwen2.5-coder:7b` | ~4.7 GB (download size) | ❌ Partially | Would spill heavily onto the CPU |
-
-"Loaded size" is what Ollama reports in memory, weights plus KV cache, which is why the same 3B model is bigger with a larger context.
-
-### 3.5 Context window: the hidden gotcha
-
-Ollama's default context window is small. Coding agents send a **large system prompt plus tool definitions** before your first word. With a small window the prompt gets truncated and the model "forgets" its tools.
-
-Fix: create a variant with a 32K context.
+Coding agents send a long system prompt plus tool definitions before your first word. With Ollama's small default context, that gets cut off and the model "forgets" its tools.
 
 ```bash
 curl http://<windows-lan-ip>:11434/api/create -d '{
@@ -166,35 +178,36 @@ curl http://<windows-lan-ip>:11434/api/create -d '{
 }'
 ```
 
-More context costs more memory for the KV cache, so on a 4 GB card it's a trade-off between context size and speed. I measured it (section 5): the 32K variant grows from 2.34 GB to 3.00 GB, 21% of it no longer fits in VRAM, and generation drops from 54.9 to 32.7 tok/s. So I use the 32K variant only for agents, and the plain model for chat and quick edits.
+> [!TIP]
+> A bigger context costs memory. On a 4 GB card the 32K variant grows to 3.00 GB, spills 21% onto the CPU and generates **40% slower**. Use it for agents only, and the plain model for chat.
 
 ---
 
-## 4. The build, step by step
+## 🔧 The build, step by step
 
-> IPs, usernames and keys are redacted. Replace `<windows-lan-ip>` and `<user>` with your own.
+> [!NOTE]
+> IPs, usernames and keys are replaced with placeholders like `<windows-lan-ip>` and `<user>`.
 
-### Step 1: OpenSSH Server on Windows
+### Step 1: SSH server on Windows
 
-I followed Microsoft's guide, [Get started with OpenSSH for Windows](https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse). The result:
+Followed Microsoft's [Get started with OpenSSH for Windows](https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse):
 
-- The `sshd` service running, set to start automatically.
-- Port 22 allowed on the **Private** network profile only.
-- PowerShell as the default SSH shell.
+- `sshd` running and set to start automatically
+- Port 22 allowed on the **Private** network profile only
+- PowerShell as the default SSH shell
 
-On my machine the standard "Optional Features" install failed, so I installed Microsoft's OpenSSH package through **winget** instead.
+If the "Optional Features" installer fails (it did for me), install Microsoft's OpenSSH package through **winget** instead.
 
-### Step 2: Key-based auth from the Mac
+### Step 2: Password-free login
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 ```
 
-For accounts in the **Administrators** group, Windows OpenSSH ignores `~\.ssh\authorized_keys`. The key has to go in `C:\ProgramData\ssh\administrators_authorized_keys`, and that file must be locked down to Administrators and SYSTEM. See Microsoft's [key-based authentication guide](https://learn.microsoft.com/windows-server/administration/openssh/openssh_keymanagement).
+> [!WARNING]
+> For **administrator** accounts, Windows OpenSSH ignores the per-user `authorized_keys`. The key must go in `C:\ProgramData\ssh\administrators_authorized_keys`, readable only by Administrators and SYSTEM. See Microsoft's [key-based authentication guide](https://learn.microsoft.com/windows-server/administration/openssh/openssh_keymanagement).
 
-I pasted the public key into an **elevated** PowerShell through the RustDesk session.
-
-### Step 3: One alias to rule them all
+### Step 3: One short name for the whole box
 
 ```sshconfig
 # ~/.ssh/config
@@ -205,121 +218,74 @@ Host datacenter
     ServerAliveInterval 60
 ```
 
-```bash
+```console
 $ ssh datacenter "whoami; hostname"
 <pc-name>\<user>
 <PC-NAME>
 ```
 
-### Step 4: Remote control with RustDesk (LAN only)
+### Step 4: Remote control with RustDesk
 
-- Installed RustDesk on both machines: `winget install RustDesk.RustDesk` on Windows, `brew install --cask rustdesk` on the Mac.
-- On Windows, under **Settings → Security**, I turned on **Enable direct IP access** and set a strong permanent password.
-- On the Mac, I type the Windows LAN IP into RustDesk to connect peer-to-peer, with no relay server involved.
-- For a "headless" feel, **Privacy mode** blanks the physical screen and blocks local input while I'm connected.
+| Where | What |
+|---|---|
+| Windows | `winget install RustDesk.RustDesk` → **Settings → Security** → enable **direct IP access**, set a strong permanent password |
+| Mac | `brew install --cask rustdesk` → connect by typing the Windows LAN IP |
+| Tip | **Privacy mode** blanks the laptop's own screen and blocks its keyboard while you're connected |
 
 ### Step 5: Serving models with Ollama
 
 ```bash
+# on Windows
 ollama pull qwen2.5:3b
 ollama pull qwen2.5-coder:1.5b-base
 ollama pull nomic-embed-text
 ```
 
-From the Mac, the `ollama` CLI acts as a thin client:
-
 ```bash
-export OLLAMA_HOST=<windows-lan-ip>:11434   # in ~/.zshrc
-ollama list
+# on the Mac: the ollama CLI becomes a thin client
+export OLLAMA_HOST=<windows-lan-ip>:11434
 ollama run qwen2.5:3b
 ```
 
-Or through the raw API:
+### Step 6: The control panel
 
-```bash
-curl http://<windows-lan-ip>:11434/api/generate \
-  -d '{"model":"qwen2.5:3b","prompt":"Hi","stream":false}'
-```
+Too many commands to remember, so I built a web GUI that puts the whole datacenter behind **one bookmark**: `http://127.0.0.1:8765`.
 
-### Step 6: The control panel, a GUI for the datacenter
+> [!NOTE]
+> 📸 *Screenshot: the full control panel (to be added)*
 
-Once everything worked, I had a new problem: too many commands to remember. `ssh datacenter`, the tunnel flags, the Ollama model names, the RustDesk address. So I built a small web GUI that runs on the Mac and puts the whole datacenter behind one bookmark: `http://127.0.0.1:8765`.
-
-> 📸 **Screenshot:** the full control panel *(to be added)*
-
-#### What it does
-
-The page has three cards.
-
-**1. Status.** Three lights show whether each service on the Windows box is reachable right now:
-
-- **SSH:** can the Mac open a connection to port 22?
-- **Ollama:** does the model server actually answer (a real `/api/tags` request, not just an open port)?
-- **RustDesk:** is the remote-control service listening?
-
-Green means healthy, red means down, and a **Refresh** button re-checks on demand. It's the first thing I look at after either machine restarts.
-
-> 📸 **Screenshot:** status lights, all green *(to be added)*
-
-**2. Open.** One-click launchers for everything I used to type by hand:
-
-| Button | What it opens |
+| Card | What it does |
 |---|---|
-| **Terminal** | A new macOS Terminal window already logged in to PowerShell on Windows |
-| **Claude Code** | Claude Code running on the Windows box, over SSH |
-| **VS Code** | VS Code connected to Windows through Remote-SSH |
-| **Screen** | RustDesk, for full remote control of the Windows desktop |
-| **GPU monitor** | A live `nvidia-smi` view that refreshes every 2 seconds |
+| 🟢 **Status** | Live lights for SSH, Ollama (a real API request, not just an open port) and RustDesk, plus **Refresh** |
+| 🚀 **Open** | One-click **Terminal** (PowerShell on Windows), **Claude Code** (on Windows), **VS Code** (Remote-SSH), **Screen** (RustDesk), **GPU monitor** (live `nvidia-smi`) |
+| 💬 **Ollama chat** | Model picker that remembers your choice, streaming answers, conversation history, **New chat** |
 
-> 📸 **Screenshot:** the launcher buttons *(to be added)*
+> [!NOTE]
+> 📸 *Screenshots: status lights · launcher buttons · a streaming chat (to be added)*
 
-**3. Ollama chat.** A ChatGPT-style chat running entirely on my own GPU:
-
-- A dropdown lists every model installed on the Windows box, and the panel remembers the last one I picked.
-- Answers **stream in token by token**, so even a slow model feels responsive.
-- The conversation keeps its history, so follow-up questions work, and **New chat** starts fresh.
-- **Enter** sends; **Shift+Enter** adds a new line.
-
-> 📸 **Screenshot:** a streaming chat with qwen2.5 3B *(to be added)*
-
-The page follows the Mac's light or dark mode automatically.
-
-#### How it's built
-
-**Code:** [`panel/dc_panel.py`](panel/dc_panel.py), plus a launchd template in [`panel/com.example.dcpanel.plist`](panel/com.example.dcpanel.plist). To try it:
-
-```bash
-DC_HOST=<windows-lan-ip> python3 panel/dc_panel.py
-# then open http://127.0.0.1:8765
-```
-
-It expects a `datacenter` host alias in `~/.ssh/config` (Step 3). Optional settings: `DC_NAME` (header label), `DC_SSH_ALIAS`, `DC_WIN_FOLDER` (folder VS Code opens) and `DC_PANEL_PORT`.
-
-The whole panel is **one Python file with zero dependencies**: just the standard library's `http.server`, with the HTML, CSS and JavaScript embedded. No npm, no frameworks, nothing to install.
+**How it's built:** one Python file, **zero dependencies** (standard library `http.server` with the page embedded).
 
 ```
-Browser (127.0.0.1:8765)
-   │
-   ├── GET  /                  → the page
-   ├── GET  /api/status        → TCP checks for SSH and RustDesk, a real request to Ollama
-   ├── GET  /api/models        → model list from Ollama
-   ├── POST /api/chat          → proxied to Ollama, streamed back line by line
-   └── POST /api/open/<name>   → one of five fixed launch actions
-   │
-dc_panel.py (Python standard library)
-   │
-   ├── direct LAN   → Ollama :11434
-   └── fallback     → SSH tunnel → Ollama (auto-started, auto-restarted)
+Browser ──▶ dc_panel.py on 127.0.0.1:8765
+              ├── GET  /api/status        health checks
+              ├── GET  /api/models        model list
+              ├── POST /api/chat          streamed, proxied to Ollama
+              └── POST /api/open/<name>   one of five fixed actions
+                        │
+                        ├── direct LAN ───────────▶ Ollama :11434
+                        └── fallback ── SSH tunnel ▶ Ollama (auto-restarted)
 ```
 
-Chat requests go through the panel rather than straight from the browser to Ollama. That avoids browser cross-origin restrictions, and it means the browser never needs to know where the Windows box actually is.
+**Design choices**
 
-#### Design choices
+- 🔒 **Local only:** binds to `127.0.0.1`; nothing else on the network can open it.
+- 🧱 **No arbitrary commands:** launch buttons map to five fixed actions.
+- 🙈 **IP never reaches the browser:** not in the page, and rewritten out of error messages.
+- ♻️ **Self-healing:** every request checks Ollama and (re)starts the SSH tunnel if needed.
+- 🔁 **Always on:** launchd starts it at login and restarts it if it exits.
 
-- **Local only.** The server binds to `127.0.0.1`, so nothing else on the network, not even another device at home, can open it.
-- **No arbitrary commands.** The launch endpoint accepts only five named actions from a fixed list. There is no way to send a shell command through the HTTP API.
-- **The Windows IP never reaches the browser.** It isn't in the page, and any error message that would contain it is rewritten to say `windows-pc` instead. That keeps it out of screenshots, including the ones in this post.
-- **Self-healing connection.** Every request first checks whether Ollama is reachable directly on the LAN. If it isn't, the panel starts an SSH tunnel on a local port (with keepalives), and if that tunnel ever dies, the next request restarts it:
+<details>
+<summary><b>Self-healing tunnel code</b></summary>
 
 ```python
 def ensure_ollama():
@@ -332,31 +298,26 @@ def ensure_ollama():
             "-L", "11435:localhost:11434", "datacenter"])
 ```
 
-- **Always on.** A launchd agent (Step 7) starts the panel at login and restarts it if it ever exits, so the bookmark simply works after every reboot.
+</details>
 
-### Step 7: Survive reboots with launchd
+### Step 7: Surviving restarts
 
-```xml
-<!-- ~/Library/LaunchAgents/com.rajathmr.dcpanel.plist -->
-<key>ProgramArguments</key>
-<array>
-  <string>/usr/bin/python3</string>
-  <string>/Users/rajathmr/datacenter/dc_panel.py</string>
-</array>
-<key>RunAtLoad</key><true/>
-<key>KeepAlive</key><true/>
-```
+Use the template in [`panel/com.example.dcpanel.plist`](panel/com.example.dcpanel.plist):
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rajathmr.dcpanel.plist
-launchctl kickstart -k gui/$(id -u)/com.rajathmr.dcpanel   # restart
+cp panel/com.example.dcpanel.plist ~/Library/LaunchAgents/   # edit the path and DC_HOST first
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.dcpanel.plist
+launchctl kickstart -k gui/$(id -u)/com.example.dcpanel      # restart
 ```
 
-On the Windows side: `sshd` starts automatically, RustDesk runs as a service, Ollama starts at user login, and sleep is set to **Never** while plugged in.
+On Windows: `sshd` starts at boot, RustDesk runs as a service, Ollama starts at sign-in, and sleep is **Never** while plugged in.
 
-### Step 8: Plugging in an agent (OpenCode as the example)
+### Step 8: Plugging in an agent
 
-`~/.config/opencode/opencode.json`:
+**OpenCode** (`~/.config/opencode/opencode.json`):
+
+<details>
+<summary><b>Show config</b></summary>
 
 ```json
 {
@@ -375,30 +336,23 @@ On the Windows side: `sshd` starts automatically, RustDesk runs as a service, Ol
 }
 ```
 
-```bash
-cd ~/my-project
-opencode              # full TUI; /models to switch
-opencode run "explain index.html"
-```
+</details>
 
-### Step 9: Any other agent
-
-Every agent needs the same three values:
+**Any other agent** needs the same three values:
 
 | Setting | Value |
 |---|---|
 | Base URL | `http://<windows-lan-ip>:11434/v1` |
-| API key | any non-empty string, e.g. `ollama` (Ollama ignores it) |
-| Model | `qwen2.5:3b-32k` for agents, `qwen2.5:3b` for chat |
-
-Many tools read the standard environment variables:
+| API key | any non-empty string, e.g. `ollama` |
+| Model | `qwen2.5:3b-32k` for agents · `qwen2.5:3b` for chat |
 
 ```bash
 export OPENAI_BASE_URL=http://<windows-lan-ip>:11434/v1
 export OPENAI_API_KEY=ollama
 ```
 
-Or in your own code:
+<details>
+<summary><b>Python (OpenAI SDK) example</b></summary>
 
 ```python
 from openai import OpenAI
@@ -411,100 +365,144 @@ reply = client.chat.completions.create(
 print(reply.choices[0].message.content)
 ```
 
+</details>
+
 ---
 
-## 5. Benchmarks
+## 📊 Benchmarks
 
-### Methodology
+Measured **from the Mac over Wi-Fi** with [`bench.py`](bench.py). Raw data: [`bench_results.json`](bench_results.json).
 
-All measurements run **from the Mac, over Wi-Fi**, against the Windows box, using [`bench.py`](bench.py) (standard library only):
+### Network
 
-- **Network:** TCP connect round-trip time to `:22` and `:11434`, 20 samples each, reporting p50 and p95. ICMP ping is blocked by the Windows firewall, so TCP connect is the honest latency probe.
+| Probe | min | p50 | p95 |
+|---|---:|---:|---:|
+| TCP connect · SSH :22 | 3.71 ms | **4.64 ms** | 6.32 ms |
+| TCP connect · Ollama :11434 | 4.19 ms | **4.99 ms** | 6.46 ms |
+
+### Models on the GTX 1650 (code task, 256 tokens)
+
+| Model | Gen tok/s | TTFT p50 | End-to-end | In VRAM | Cold load |
+|---|---:|---:|---:|---:|---:|
+| `qwen2.5-coder:1.5b-base` | **89.5** | 35 ms | 2.95 s | 100% | 5.4 s |
+| `qwen2.5:3b` | **54.9** | 46 ms | 4.76 s | 100% | 6.8 s |
+| `qwen2.5:3b-32k` | **32.7** | 61 ms | 7.96 s | 79% | 7.6 s |
+
+<details>
+<summary><b>All workloads and prompt-processing speed</b></summary>
+
+**Generation speed by workload (tok/s)**
+
+| Model | Short answer | Code | ~150-word explanation |
+|---|---:|---:|---:|
+| `qwen2.5-coder:1.5b-base` | 127.5\* | 89.5 | 86.8 |
+| `qwen2.5:3b` | 58.1 | 54.9 | 53.4 |
+| `qwen2.5:3b-32k` | 35.1 | 32.7 | 32.3 |
+
+\* Only ~3 output tokens, so noisy.
+
+**Prompt processing (code task):** 878 · 1,631 · 912 tok/s respectively.
+**Memory:** 1.39 / 1.39 GB · 2.34 / 2.34 GB · 2.37 / 3.00 GB in VRAM.
+
+</details>
+
+<details>
+<summary><b>Methodology</b></summary>
+
+- **Network:** 20 TCP connects per port (the firewall blocks ping), p50 and p95.
 - **Cold load:** unload the model (`keep_alive: 0`), then time a one-token request.
-- **Throughput:** Ollama's own `eval_count / eval_duration` (generation tokens/s) and `prompt_eval_count / prompt_eval_duration` (prompt-processing tokens/s).
-- **User-perceived latency:** time to first token (TTFT) over a streaming request, plus end-to-end time for a request capped at 256 tokens.
-- **Workloads:** short answer, code generation, ~150-word explanation. 3 runs each, `temperature: 0`.
-- **Memory:** `/api/ps` reports total model size and how much of it sits in VRAM, which reveals CPU offload.
+- **Throughput:** Ollama's `eval_count / eval_duration` and `prompt_eval_count / prompt_eval_duration`.
+- **Latency:** time to first token over a streaming request; end-to-end time for 256 tokens.
+- **Workloads:** short answer, code generation, ~150-word explanation; 3 runs each at `temperature: 0`.
+- **Memory:** `/api/ps` total size vs. size in VRAM.
 
 ```bash
 DC_HOST=<windows-lan-ip> python3 bench.py > bench_results.json
 ```
 
-### Results
+</details>
 
-Raw output is in [`bench_results.json`](bench_results.json).
+### 💡 What the numbers say
 
-**Network (Mac → Windows, Wi-Fi, 20 samples)**
-
-| Probe | min | p50 | p95 |
-|---|---|---|---|
-| TCP connect :22 (SSH) | 3.71 ms | 4.64 ms | 6.32 ms |
-| TCP connect :11434 (Ollama) | 4.19 ms | 4.99 ms | 6.46 ms |
-
-**Models on the GTX 1650 (4 GB), code-generation workload, 256 output tokens**
-
-| Model | Cold load | In VRAM / total | Gen tok/s | Prompt tok/s | TTFT p50 | End-to-end p50 |
-|---|---|---|---|---|---|---|
-| `qwen2.5-coder:1.5b-base` | 5.4 s | 1.39 / 1.39 GB (100%) | **89.5** | 878 | 35 ms | 2.95 s |
-| `qwen2.5:3b` | 6.8 s | 2.34 / 2.34 GB (100%) | **54.9** | 1,631 | 46 ms | 4.76 s |
-| `qwen2.5:3b-32k` | 7.6 s | 2.37 / 3.00 GB (79%) | **32.7** | 912 | 61 ms | 7.96 s |
-
-**Generation speed across all three workloads (tokens/s)**
-
-| Model | Short answer | Code | ~150-word explanation |
-|---|---|---|---|
-| `qwen2.5-coder:1.5b-base` | 127.5* | 89.5 | 86.8 |
-| `qwen2.5:3b` | 58.1 | 54.9 | 53.4 |
-| `qwen2.5:3b-32k` | 35.1 | 32.7 | 32.3 |
-
-\* The base (completion) model produced only about 3 tokens for the short prompt, so that figure is noisy.
-
-### What the numbers say
-
-1. **The network is a rounding error.** A 4.6 ms round trip against a 4.76 s generation is about **0.1% overhead**. Serving models over home Wi-Fi costs effectively nothing; the GPU is the bottleneck.
-2. **The 32K context has a real price on a 4 GB card.** The bigger KV cache pushes the model to 3.0 GB, and only 79% of it fits in VRAM. The rest spills to the CPU, and generation drops from 54.9 to 32.7 tok/s (**−40%**), while end-to-end time grows by **67%**. It's worth it for agents, which need the context, but chat and quick edits should use the plain `qwen2.5:3b`.
-3. **The 1.5B coder is the right autocomplete model.** At about 90 tok/s with a 35 ms time to first token, it's fast enough for inline suggestions.
-4. **Time to first token stays under 65 ms for every model once warm.** Responses feel instant; only the total length determines the wait.
-5. **Cold starts take 5–8 s.** Ollama unloads idle models, so the first request after a pause pays this cost. Raising `keep_alive` would avoid it, at the price of holding VRAM.
+1. **The network is a rounding error.** 4.6 ms against a 4.76 s answer is **~0.1%**. The GPU is the only bottleneck.
+2. **Big contexts cost real speed on small GPUs.** The 32K variant spills to the CPU: **−40%** generation speed, **+67%** end-to-end time. Worth it for agents only.
+3. **The 1.5B coder is the right autocomplete model.** ~90 tok/s and a 35 ms first token feel instant.
+4. **Warm responses feel immediate.** Every model starts answering in under 65 ms.
+5. **Cold starts take 5–8 s.** A longer `keep_alive` avoids them, at the cost of holding VRAM.
 
 ---
 
-## 6. Security model
+## 🔒 Security model
 
 | Surface | Exposure | Control |
 |---|---|---|
-| SSH :22 | LAN only | Key auth (ed25519), firewall scoped to the Private profile |
-| RustDesk :21118 | LAN only (direct IP) | Strong permanent password, no public relay |
-| Ollama :11434 | LAN only | Private profile. Ollama has **no auth**, so never port-forward it on the router |
-| Control panel :8765 | Mac loopback only | Bound to `127.0.0.1`, fixed action allowlist, IP redacted in the UI |
+| SSH :22 | LAN only | ed25519 key auth; firewall scoped to private networks |
+| RustDesk :21118 | LAN only | Direct IP, strong permanent password, no public relay |
+| Ollama :11434 | LAN only | Private profile only; Ollama has **no auth** |
+| Control panel :8765 | Mac only | Bound to `127.0.0.1`, fixed action allowlist, IP redacted |
 
-No router port-forwarding and no public tunnels, on purpose. Nothing in this setup is reachable from the internet.
+> [!CAUTION]
+> Never port-forward Ollama on your router. It has no authentication, so anyone who can reach it can use your GPU.
 
 ---
 
-## 7. Zero-cost bill of materials
+## 💸 Zero-cost bill of materials
 
-| Component | Role | License / price | Cost |
-|---|---|---|---|
+| Component | Role | License | Cost |
+|---|---|---|---:|
 | Windows laptop (GTX 1650) | Compute | Already owned | ₹0 |
 | MacBook | Workstation | Already owned | ₹0 |
-| OpenSSH | Remote shell, tunnels | Built into macOS and Windows | ₹0 |
-| RustDesk | Remote control | Open source (AGPL-3.0) | ₹0 |
-| Ollama | Model serving | Open source (MIT) | ₹0 |
+| OpenSSH | Shell, tunnels | Built into macOS and Windows | ₹0 |
+| RustDesk | Remote control | AGPL-3.0 | ₹0 |
+| Ollama | Model serving | MIT | ₹0 |
 | Qwen2.5 models | LLMs | Open weights | ₹0 |
-| nomic-embed-text | Embeddings | Open weights (Apache-2.0) | ₹0 |
-| OpenCode | Coding agent | Open source (MIT) | ₹0 |
+| nomic-embed-text | Embeddings | Apache-2.0 | ₹0 |
+| OpenCode | Coding agent | MIT | ₹0 |
 | Python 3, launchd | Control panel, auto-start | Built into macOS | ₹0 |
-| **Total** | | | **₹0** |
+| | | **Total** | **₹0** |
 
-The only running cost is electricity for the Windows laptop. There are no API tokens to pay for: every prompt is processed on my own GPU.
+The only running cost is electricity. No API tokens to pay for: every prompt runs on my own GPU.
 
 ---
 
-## Stack
+## 🚀 Quick start
 
-**Mac:** macOS 15.7 · Apple M4 · OpenSSH · RustDesk · Python 3 (standard library) · launchd · OpenCode
-**Windows:** Windows 11 Home · i5-10300H · 8 GB RAM · GTX 1650 4 GB · OpenSSH Server · RustDesk · Ollama 0.34.4
-**Models:** qwen2.5:3b · qwen2.5:3b-32k · qwen2.5-coder:1.5b-base · nomic-embed-text
+```bash
+git clone https://github.com/Rajath2000/zero-cost-ai-datacenter.git
+cd zero-cost-ai-datacenter
 
-*Built on a weekend. Zero cost, zero cloud, and it works with any agent.*
+# 1. Control panel (needs the `datacenter` SSH alias from Step 3)
+DC_HOST=<windows-lan-ip> python3 panel/dc_panel.py
+open http://127.0.0.1:8765
+
+# 2. Benchmarks
+DC_HOST=<windows-lan-ip> python3 bench.py > bench_results.json
+```
+
+### 📁 Repository
+
+| Path | What it is |
+|---|---|
+| [`README.md`](README.md) | This write-up |
+| [`panel/dc_panel.py`](panel/dc_panel.py) | The control panel (single file, standard library only) |
+| [`panel/com.example.dcpanel.plist`](panel/com.example.dcpanel.plist) | launchd template to start the panel at login |
+| [`bench.py`](bench.py) | Network and model benchmark script |
+| [`bench_results.json`](bench_results.json) | Raw benchmark results |
+
+### 🧰 Stack
+
+| | |
+|---|---|
+| **Mac** | macOS 15.7 · Apple M4 · OpenSSH · RustDesk · Python 3 · launchd · OpenCode |
+| **Windows** | Windows 11 Home · i5-10300H · 8 GB RAM · GTX 1650 4 GB · OpenSSH Server · RustDesk · Ollama 0.34.4 |
+| **Models** | qwen2.5:3b · qwen2.5:3b-32k · qwen2.5-coder:1.5b-base · nomic-embed-text |
+
+---
+
+<div align="center">
+
+**Built on a weekend. Zero cost, zero cloud, and it works with any agent.**
+
+If you have an old laptop with a GPU gathering dust, you already own a datacenter. ⭐
+
+</div>
