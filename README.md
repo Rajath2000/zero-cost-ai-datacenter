@@ -286,6 +286,15 @@ The page follows the Mac's light or dark mode automatically.
 
 #### How it's built
 
+**Code:** [`panel/dc_panel.py`](panel/dc_panel.py), plus a launchd template in [`panel/com.example.dcpanel.plist`](panel/com.example.dcpanel.plist). To try it:
+
+```bash
+DC_HOST=<windows-lan-ip> python3 panel/dc_panel.py
+# then open http://127.0.0.1:8765
+```
+
+It expects a `datacenter` host alias in `~/.ssh/config` (Step 3). Optional settings: `DC_NAME` (header label), `DC_SSH_ALIAS`, `DC_WIN_FOLDER` (folder VS Code opens) and `DC_PANEL_PORT`.
+
 The whole panel is **one Python file with zero dependencies**: just the standard library's `http.server`, with the HTML, CSS and JavaScript embedded. No npm, no frameworks, nothing to install.
 
 ```
