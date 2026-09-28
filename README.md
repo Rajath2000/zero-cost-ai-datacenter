@@ -241,23 +241,76 @@ curl http://<windows-lan-ip>:11434/api/generate \
   -d '{"model":"qwen2.5:3b","prompt":"Hi","stream":false}'
 ```
 
-### Step 6: The control panel
+### Step 6: The control panel, a GUI for the datacenter
 
-Instead of memorizing commands, I built a single-file Python control panel. It has **zero dependencies**, using only the standard library's `http.server`.
+Once everything worked, I had a new problem: too many commands to remember. `ssh datacenter`, the tunnel flags, the Ollama model names, the RustDesk address. So I built a small web GUI that runs on the Mac and puts the whole datacenter behind one bookmark: `http://127.0.0.1:8765`.
 
-**Features**
+> 📸 **Screenshot:** the full control panel *(to be added)*
 
-- Live status for SSH, Ollama and RustDesk.
-- One-click launchers: Windows terminal, Claude Code on Windows, VS Code Remote-SSH, RustDesk, GPU monitor.
-- Streaming chat with any Ollama model, with the last-used model remembered.
-- Light and dark themes.
+#### What it does
 
-**Design choices**
+The page has three cards.
 
-- **Binds to `127.0.0.1` only.** It's never reachable from the network.
-- **Fixed action allowlist.** The HTTP API can't run arbitrary commands.
-- **IP redaction.** The Windows IP never appears in the UI or in error messages.
-- **Self-healing Ollama path.** Every request checks the direct LAN endpoint first; if that fails, it (re)spawns `ssh -N -L 11435:localhost:11434 datacenter` with keepalives.
+**1. Status.** Three lights show whether each service on the Windows box is reachable right now:
+
+- **SSH:** can the Mac open a connection to port 22?
+- **Ollama:** does the model server actually answer (a real `/api/tags` request, not just an open port)?
+- **RustDesk:** is the remote-control service listening?
+
+Green means healthy, red means down, and a **Refresh** button re-checks on demand. It's the first thing I look at after either machine restarts.
+
+> 📸 **Screenshot:** status lights, all green *(to be added)*
+
+**2. Open.** One-click launchers for everything I used to type by hand:
+
+| Button | What it opens |
+|---|---|
+| **Terminal** | A new macOS Terminal window already logged in to PowerShell on Windows |
+| **Claude Code** | Claude Code running on the Windows box, over SSH |
+| **VS Code** | VS Code connected to Windows through Remote-SSH |
+| **Screen** | RustDesk, for full remote control of the Windows desktop |
+| **GPU monitor** | A live `nvidia-smi` view that refreshes every 2 seconds |
+
+> 📸 **Screenshot:** the launcher buttons *(to be added)*
+
+**3. Ollama chat.** A ChatGPT-style chat running entirely on my own GPU:
+
+- A dropdown lists every model installed on the Windows box, and the panel remembers the last one I picked.
+- Answers **stream in token by token**, so even a slow model feels responsive.
+- The conversation keeps its history, so follow-up questions work, and **New chat** starts fresh.
+- **Enter** sends; **Shift+Enter** adds a new line.
+
+> 📸 **Screenshot:** a streaming chat with qwen2.5 3B *(to be added)*
+
+The page follows the Mac's light or dark mode automatically.
+
+#### How it's built
+
+The whole panel is **one Python file with zero dependencies**: just the standard library's `http.server`, with the HTML, CSS and JavaScript embedded. No npm, no frameworks, nothing to install.
+
+```
+Browser (127.0.0.1:8765)
+   │
+   ├── GET  /                  → the page
+   ├── GET  /api/status        → TCP checks for SSH and RustDesk, a real request to Ollama
+   ├── GET  /api/models        → model list from Ollama
+   ├── POST /api/chat          → proxied to Ollama, streamed back line by line
+   └── POST /api/open/<name>   → one of five fixed launch actions
+   │
+dc_panel.py (Python standard library)
+   │
+   ├── direct LAN   → Ollama :11434
+   └── fallback     → SSH tunnel → Ollama (auto-started, auto-restarted)
+```
+
+Chat requests go through the panel rather than straight from the browser to Ollama. That avoids browser cross-origin restrictions, and it means the browser never needs to know where the Windows box actually is.
+
+#### Design choices
+
+- **Local only.** The server binds to `127.0.0.1`, so nothing else on the network, not even another device at home, can open it.
+- **No arbitrary commands.** The launch endpoint accepts only five named actions from a fixed list. There is no way to send a shell command through the HTTP API.
+- **The Windows IP never reaches the browser.** It isn't in the page, and any error message that would contain it is rewritten to say `windows-pc` instead. That keeps it out of screenshots, including the ones in this post.
+- **Self-healing connection.** Every request first checks whether Ollama is reachable directly on the LAN. If it isn't, the panel starts an SSH tunnel on a local port (with keepalives), and if that tunnel ever dies, the next request restarts it:
 
 ```python
 def ensure_ollama():
@@ -269,6 +322,8 @@ def ensure_ollama():
             "-o", "ServerAliveInterval=30",
             "-L", "11435:localhost:11434", "datacenter"])
 ```
+
+- **Always on.** A launchd agent (Step 7) starts the panel at login and restarts it if it ever exits, so the bookmark simply works after every reboot.
 
 ### Step 7: Survive reboots with launchd
 
