@@ -1,0 +1,109 @@
+{
+  "network": {
+    "ssh_22": {
+      "p50_ms": 4.64,
+      "p95_ms": 6.32,
+      "min_ms": 3.71
+    },
+    "ollama_11434": {
+      "p50_ms": 4.99,
+      "p95_ms": 6.46,
+      "min_ms": 4.19
+    }
+  },
+  "models": {
+    "qwen2.5:3b": {
+      "cold_load_ms": 6765,
+      "size_gb": 2.34,
+      "vram_gb": 2.34,
+      "prompts": {
+        "short": {
+          "gen_tok_s": 58.1,
+          "prompt_tok_s": 1469.4,
+          "ttft_p50_ms": 35,
+          "total_p50_ms": 198,
+          "total_p95_ms": 310,
+          "out_tokens": 10
+        },
+        "code": {
+          "gen_tok_s": 54.9,
+          "prompt_tok_s": 1631.3,
+          "ttft_p50_ms": 46,
+          "total_p50_ms": 4761,
+          "total_p95_ms": 4772,
+          "out_tokens": 256
+        },
+        "reason": {
+          "gen_tok_s": 53.4,
+          "prompt_tok_s": 1509.8,
+          "ttft_p50_ms": 46,
+          "total_p50_ms": 4878,
+          "total_p95_ms": 4894,
+          "out_tokens": 256
+        }
+      }
+    },
+    "qwen2.5:3b-32k": {
+      "cold_load_ms": 7554,
+      "size_gb": 3.0,
+      "vram_gb": 2.37,
+      "prompts": {
+        "short": {
+          "gen_tok_s": 35.1,
+          "prompt_tok_s": 728.0,
+          "ttft_p50_ms": 55,
+          "total_p50_ms": 438,
+          "total_p95_ms": 491,
+          "out_tokens": 10
+        },
+        "code": {
+          "gen_tok_s": 32.7,
+          "prompt_tok_s": 912.0,
+          "ttft_p50_ms": 61,
+          "total_p50_ms": 7963,
+          "total_p95_ms": 8078,
+          "out_tokens": 256
+        },
+        "reason": {
+          "gen_tok_s": 32.3,
+          "prompt_tok_s": 894.2,
+          "ttft_p50_ms": 61,
+          "total_p50_ms": 6755,
+          "total_p95_ms": 8105,
+          "out_tokens": 227
+        }
+      }
+    },
+    "qwen2.5-coder:1.5b-base": {
+      "cold_load_ms": 5372,
+      "size_gb": 1.39,
+      "vram_gb": 1.39,
+      "prompts": {
+        "short": {
+          "gen_tok_s": 127.5,
+          "prompt_tok_s": 424.5,
+          "ttft_p50_ms": 27,
+          "total_p50_ms": 56,
+          "total_p95_ms": 93,
+          "out_tokens": 3
+        },
+        "code": {
+          "gen_tok_s": 89.5,
+          "prompt_tok_s": 877.8,
+          "ttft_p50_ms": 35,
+          "total_p50_ms": 2951,
+          "total_p95_ms": 2977,
+          "out_tokens": 256
+        },
+        "reason": {
+          "gen_tok_s": 86.8,
+          "prompt_tok_s": 827.9,
+          "ttft_p50_ms": 38,
+          "total_p50_ms": 3029,
+          "total_p95_ms": 3108,
+          "out_tokens": 256
+        }
+      }
+    }
+  }
+}
